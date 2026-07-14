@@ -133,6 +133,9 @@ module.exports = {
         }
         return row;
       },
+      findRow(rowNumber) {
+        return this.rows[rowNumber - 1];
+      },
       getCell(rowNumber, colNumber) {
         return this.getRow(rowNumber).getCell(colNumber);
       },
