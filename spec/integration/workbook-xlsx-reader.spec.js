@@ -410,4 +410,27 @@ describe('WorkbookReader', () => {
       );
     });
   });
+
+  describe('with a zip whose data descriptors carry 64-bit sizes', () => {
+    it('should stream the rows from a file path', () => {
+      const rows = [];
+      const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(
+        './spec/integration/data/zip64-data-descriptors.xlsx',
+        {sharedStrings: 'cache', worksheets: 'emit'}
+      );
+      workbookReader.on('worksheet', worksheet =>
+        worksheet.on('row', row => rows.push(row.values.slice(1)))
+      );
+      return new Promise((resolve, reject) => {
+        workbookReader.on('error', reject);
+        workbookReader.on('finished', resolve);
+        workbookReader.read();
+      }).then(() => {
+        expect(rows).to.deep.equal([
+          ['Addend 1', 'Addend 2', 'Sum'],
+          [1, 1, {formula: 'SUM(A2,B2)', result: 2}],
+        ]);
+      });
+    });
+  });
 });
