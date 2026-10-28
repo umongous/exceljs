@@ -1,10 +1,13 @@
 const fs = require('fs');
+const JSZip = require('jszip');
+const unzip = require('unzipper');
 
 const testutils = require('../utils/index');
 
 const ExcelJS = verquire('exceljs');
 
 const TEST_FILE_NAME = './spec/out/wb.test.xlsx';
+const PADDED_FILE_NAME = './spec/out/wb.padded.xlsx';
 
 // need some architectural changes to make stream read work properly
 // because of: shared strings, sheet names, etc are not read in guaranteed order
@@ -431,6 +434,58 @@ describe('WorkbookReader', () => {
           [1, 1, {formula: 'SUM(A2,B2)', result: 2}],
         ]);
       });
+    });
+  });
+
+  describe('with a zip holding entries the reader skips', () => {
+    const {file: openFile} = unzip.Open;
+    const opened = [];
+
+    before(async () => {
+      const zip = await JSZip.loadAsync(
+        fs.readFileSync('./spec/integration/data/zip64-data-descriptors.xlsx')
+      );
+      for (let i = 0; i < 200; i++) {
+        zip.file(`xl/media/pad${i}.bin`, Buffer.alloc(1024, i));
+      }
+      const buffer = await zip.generateAsync({
+        type: 'nodebuffer',
+        compression: 'DEFLATE',
+      });
+      fs.writeFileSync(PADDED_FILE_NAME, buffer);
+      unzip.Open.file = async (...args) => {
+        const directory = await openFile(...args);
+        for (const file of directory.files) {
+          const {stream} = file;
+          file.stream = (...rest) => {
+            opened.push(file.path);
+            return stream.apply(file, rest);
+          };
+        }
+        return directory;
+      };
+    });
+
+    after(() => {
+      unzip.Open.file = openFile;
+    });
+
+    it('should open only the entries it parses', async () => {
+      const rows = [];
+      const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(
+        PADDED_FILE_NAME,
+        {sharedStrings: 'cache', worksheets: 'emit'}
+      );
+      for await (const worksheet of workbookReader) {
+        for await (const row of worksheet) {
+          rows.push(row.values.slice(1));
+        }
+      }
+      expect(rows).to.have.length(2);
+      expect(opened).to.include('xl/worksheets/sheet1.xml');
+      expect(opened.filter(path => path.startsWith('xl/media/'))).to.deep.equal(
+        []
+      );
     });
   });
 });
