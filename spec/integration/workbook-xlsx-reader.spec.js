@@ -488,4 +488,95 @@ describe('WorkbookReader', () => {
       );
     });
   });
+
+  describe('with hand-written parts', () => {
+    const MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    const RELS =
+      'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    const PACKAGE_RELS =
+      'http://schemas.openxmlformats.org/package/2006/relationships';
+    const PARTS_FILE_NAME = './spec/out/wb.parts.xlsx';
+
+    const workbookParts = sheetCount => {
+      const ids = [...Array(sheetCount).keys()].map(i => i + 1);
+      const rels = ids
+        .map(
+          id =>
+            `<Relationship Id="rId${id}" Type="${RELS}/worksheet" Target="worksheets/sheet${id}.xml"/>`
+        )
+        .join('');
+      const sheets = ids
+        .map(id => `<sheet name="Sheet${id}" sheetId="${id}" r:id="rId${id}"/>`)
+        .join('');
+      return [
+        [
+          'xl/_rels/workbook.xml.rels',
+          `<Relationships xmlns="${PACKAGE_RELS}">${rels}</Relationships>`,
+        ],
+        [
+          'xl/workbook.xml',
+          `<workbook xmlns="${MAIN}" xmlns:r="${RELS}"><sheets>${sheets}</sheets></workbook>`,
+        ],
+      ];
+    };
+    const sharedStrings = strings => [
+      'xl/sharedStrings.xml',
+      `<sst xmlns="${MAIN}">${strings.join('')}</sst>`,
+    ];
+    const sheet = (id, rows) => [
+      `xl/worksheets/sheet${id}.xml`,
+      `<worksheet xmlns="${MAIN}"><sheetData>${rows}</sheetData></worksheet>`,
+    ];
+
+    const writeParts = async parts => {
+      const zip = new JSZip();
+      for (const [name, xml] of parts) zip.file(name, xml);
+      fs.writeFileSync(
+        PARTS_FILE_NAME,
+        await zip.generateAsync({type: 'nodebuffer', compression: 'DEFLATE'})
+      );
+    };
+    const openReader = () =>
+      new ExcelJS.stream.xlsx.WorkbookReader(PARTS_FILE_NAME, {
+        sharedStrings: 'cache',
+        worksheets: 'emit',
+      });
+    const readValues = async () => {
+      const values = [];
+      for await (const worksheet of openReader()) {
+        for await (const row of worksheet) values.push(...row.values.slice(1));
+      }
+      return values;
+    };
+
+    it('should decode _xHHHH_ escapes in every string value', async () => {
+      await writeParts([
+        ...workbookParts(1),
+        sharedStrings([
+          '<si><t>Strongly_x000D_\nagree</t></si>',
+          '<si><r><t>tab_x0009_</t></r><r><t>end</t></r></si>',
+          '<si><t>_x005F_x0041_</t><rPh sb="0" eb="1"><t>_x0042_</t></rPh></si>',
+        ]),
+        sheet(
+          1,
+          '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c>' +
+            '<c r="D1" t="inlineStr"><is><t>one_x000D_two</t></is></c><c r="E1" t="str"><v>x_x000a_y</v></c>' +
+            '<c r="F1" t="str"><f>E1</f><v>p_x000D_q</v></c></row>'
+        ),
+      ]);
+      expect(await readValues()).to.deep.equal([
+        'Strongly\r\nagree',
+        {
+          richText: [
+            {font: null, text: 'tab\t'},
+            {font: null, text: 'end'},
+          ],
+        },
+        '_x0041_',
+        'one\rtwo',
+        'x\ny',
+        {formula: 'E1', result: 'p\rq'},
+      ]);
+    });
+  });
 });
