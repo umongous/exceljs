@@ -578,5 +578,31 @@ describe('WorkbookReader', () => {
         {formula: 'E1', result: 'p\rq'},
       ]);
     });
+
+    it('should read a t="d" cell as its ISO date, in UTC when it has no offset', async () => {
+      await writeParts([
+        ...workbookParts(1),
+        sheet(
+          1,
+          '<row r="1"><c r="A1" t="d"><v>2024-03-15</v></c><c r="B1" t="d"><v>2024-03-15T10:30:00</v></c>' +
+            '<c r="C1" t="d"><v>2024-03-15T10:30:00+02:00</v></c><c r="D1" t="d"><v>not a date</v></c>' +
+            '<c r="E1" t="d"><f>A1</f><v>2024-03-15T10:30:00Z</v></c></row>'
+        ),
+      ]);
+      const {TZ} = process.env;
+      process.env.TZ = 'America/New_York';
+      try {
+        expect(await readValues()).to.deep.equal([
+          new Date(Date.UTC(2024, 2, 15)),
+          new Date(Date.UTC(2024, 2, 15, 10, 30)),
+          new Date(Date.UTC(2024, 2, 15, 8, 30)),
+          'not a date',
+          {formula: 'A1', result: new Date(Date.UTC(2024, 2, 15, 10, 30))},
+        ]);
+      } finally {
+        if (TZ === undefined) delete process.env.TZ;
+        else process.env.TZ = TZ;
+      }
+    });
   });
 });
