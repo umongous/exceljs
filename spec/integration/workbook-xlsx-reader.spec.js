@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const JSZip = require('jszip');
 const unzip = require('unzipper');
 
@@ -496,6 +497,7 @@ describe('WorkbookReader', () => {
     const PACKAGE_RELS =
       'http://schemas.openxmlformats.org/package/2006/relationships';
     const PARTS_FILE_NAME = './spec/out/wb.parts.xlsx';
+    const SPOOL_PREFIX = `tmp-${process.pid}-`;
 
     const workbookParts = sheetCount => {
       const ids = [...Array(sheetCount).keys()].map(i => i + 1);
@@ -548,6 +550,13 @@ describe('WorkbookReader', () => {
       }
       return values;
     };
+    const readError = () =>
+      readValues().then(
+        () => null,
+        error => error
+      );
+    const spoolsLeft = () =>
+      fs.readdirSync(os.tmpdir()).filter(name => name.startsWith(SPOOL_PREFIX));
 
     it('should decode _xHHHH_ escapes in every string value', async () => {
       await writeParts([
@@ -603,6 +612,58 @@ describe('WorkbookReader', () => {
         if (TZ === undefined) delete process.env.TZ;
         else process.env.TZ = TZ;
       }
+    });
+
+    it('should fail an entry that inflates past its declared size', async () => {
+      await writeParts([
+        ...workbookParts(1),
+        sharedStrings(['<si><t>padding</t></si>']),
+        sheet(1, ''),
+      ]);
+      const buffer = fs.readFileSync(PARTS_FILE_NAME);
+      // central directory record: uncompressed size at 24, name length at 28, name at 46
+      const signature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+      let record = buffer.indexOf(signature);
+      while (
+        buffer.toString(
+          'utf8',
+          record + 46,
+          record + 46 + buffer.readUInt16LE(record + 28)
+        ) !== 'xl/sharedStrings.xml'
+      ) {
+        record = buffer.indexOf(signature, record + 46);
+      }
+      buffer.writeUInt32LE(16, record + 24);
+      fs.writeFileSync(PARTS_FILE_NAME, buffer);
+      const error = await readError();
+      expect(error && error.message).to.equal(
+        'Zip entry xl/sharedStrings.xml inflates past its declared 16 bytes'
+      );
+    });
+
+    it('should remove its spools when a sheet fails to parse', async () => {
+      const left = spoolsLeft();
+      await writeParts([
+        sheet(1, '<row r="1"><c r="A1"><v>1</v></row>'),
+        sheet(2, '<row r="1"><c r="A1"><v>2</v></c></row>'),
+        ...workbookParts(2),
+      ]);
+      expect(await readError()).to.be.an('error');
+      expect(spoolsLeft()).to.deep.equal(left);
+    });
+
+    it('should remove its spools when the reader stops early', async () => {
+      const left = spoolsLeft();
+      await writeParts([
+        sheet(1, '<row r="1"><c r="A1"><v>1</v></c></row>'),
+        sheet(2, '<row r="1"><c r="A1"><v>2</v></c></row>'),
+        ...workbookParts(2),
+      ]);
+      for await (const worksheet of openReader()) {
+        expect(worksheet.name).to.equal('Sheet1');
+        break;
+      }
+      expect(spoolsLeft()).to.deep.equal(left);
     });
   });
 });
