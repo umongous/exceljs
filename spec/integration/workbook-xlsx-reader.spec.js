@@ -557,6 +557,25 @@ describe('WorkbookReader', () => {
       );
     const spoolsLeft = () =>
       fs.readdirSync(os.tmpdir()).filter(name => name.startsWith(SPOOL_PREFIX));
+    // central directory record: uncompressed size at 24, name length at 28, name at 46
+    const declareSize = (path, size) => {
+      const buffer = fs.readFileSync(PARTS_FILE_NAME);
+      const signature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+      let record = -46;
+      do {
+        record = buffer.indexOf(signature, record + 46);
+        if (record === -1)
+          throw new Error(`No central directory record for ${path}`);
+      } while (
+        buffer.toString(
+          'utf8',
+          record + 46,
+          record + 46 + buffer.readUInt16LE(record + 28)
+        ) !== path
+      );
+      buffer.writeUInt32LE(size, record + 24);
+      fs.writeFileSync(PARTS_FILE_NAME, buffer);
+    };
 
     it('should decode _xHHHH_ escapes in every string value', async () => {
       await writeParts([
@@ -620,24 +639,23 @@ describe('WorkbookReader', () => {
         sharedStrings(['<si><t>padding</t></si>']),
         sheet(1, ''),
       ]);
-      const buffer = fs.readFileSync(PARTS_FILE_NAME);
-      // central directory record: uncompressed size at 24, name length at 28, name at 46
-      const signature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
-      let record = buffer.indexOf(signature);
-      while (
-        buffer.toString(
-          'utf8',
-          record + 46,
-          record + 46 + buffer.readUInt16LE(record + 28)
-        ) !== 'xl/sharedStrings.xml'
-      ) {
-        record = buffer.indexOf(signature, record + 46);
-      }
-      buffer.writeUInt32LE(16, record + 24);
-      fs.writeFileSync(PARTS_FILE_NAME, buffer);
+      declareSize('xl/sharedStrings.xml', 16);
       const error = await readError();
       expect(error && error.message).to.equal(
         'Zip entry xl/sharedStrings.xml inflates past its declared 16 bytes'
+      );
+    });
+
+    it('should fail an entry whose declared size is 0xFFFFFFFF with no zip64 field', async () => {
+      await writeParts([
+        ...workbookParts(1),
+        sharedStrings(['<si><t>padding</t></si>']),
+        sheet(1, ''),
+      ]);
+      declareSize('xl/sharedStrings.xml', 0xffffffff);
+      const error = await readError();
+      expect(error && error.message).to.equal(
+        'Zip entry xl/sharedStrings.xml inflates past its declared undefined bytes'
       );
     });
 
