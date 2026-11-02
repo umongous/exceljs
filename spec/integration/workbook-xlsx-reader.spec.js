@@ -656,6 +656,25 @@ describe('WorkbookReader', () => {
       ]);
     });
 
+    it('should decode str and inline strings once, as shared strings', async () => {
+      await writeParts([
+        ...workbookParts(1),
+        sharedStrings(['<si><t>Tom &amp;amp; Jerry</t></si>']),
+        sheet(
+          1,
+          '<row r="1"><c r="A1" t="inlineStr"><is><t>Tom &amp;amp; Jerry</t></is></c>' +
+            '<c r="B1" t="str"><v>Tom &amp;amp; Jerry</v></c><c r="C1" t="s"><v>0</v></c>' +
+            '<c r="D1" t="str"><f>A1</f><v>AT&amp;amp;T &amp;lt;b&amp;gt;</v></c></row>'
+        ),
+      ]);
+      expect(await readValues()).to.deep.equal([
+        'Tom &amp; Jerry',
+        'Tom &amp; Jerry',
+        'Tom &amp; Jerry',
+        {formula: 'A1', result: 'AT&amp;T &lt;b&gt;'},
+      ]);
+    });
+
     it('should fail an entry that inflates past its declared size', async () => {
       await writeParts([
         ...workbookParts(1),
