@@ -675,6 +675,24 @@ describe('WorkbookReader', () => {
       ]);
     });
 
+    it('should decode a NUL or unpaired surrogate escape as U+FFFD and keep an escaped pair', async () => {
+      await writeParts([
+        ...workbookParts(1),
+        sharedStrings(['<si><t>a_x0000_b</t></si>']),
+        sheet(
+          1,
+          '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>c_xD800_d</t></is></c>' +
+            '<c r="C1" t="str"><v>e_xDC00__xD800_f</v></c><c r="D1" t="str"><v>_xD83D__xDE00_</v></c></row>'
+        ),
+      ]);
+      expect(await readValues()).to.deep.equal([
+        'a\uFFFDb',
+        'c\uFFFDd',
+        'e\uFFFD\uFFFDf',
+        '\u{1F600}',
+      ]);
+    });
+
     it('should fail an entry that inflates past its declared size', async () => {
       await writeParts([
         ...workbookParts(1),
