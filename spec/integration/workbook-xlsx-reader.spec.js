@@ -633,6 +633,29 @@ describe('WorkbookReader', () => {
       }
     });
 
+    it('should read an empty or non-finite number, boolean or formula result as no value', async () => {
+      await writeParts([
+        ...workbookParts(1),
+        sheet(
+          1,
+          '<row r="1"><c r="A1"><v>2.5</v></c><c r="B1"><v/></c><c r="C1" t="n"><v></v></c>' +
+            '<c r="D1"><v>1e400</v></c><c r="E1"><v>-1e400</v></c><c r="F1" t="b"><v/></c>' +
+            '<c r="G1" t="b"><v>0</v></c><c r="H1"><f>B1</f><v/></c><c r="I1" t="str"><v/></c></row>'
+        ),
+      ]);
+      expect(await readValues()).to.deep.equal([
+        2.5,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        {formula: 'B1'},
+        '',
+      ]);
+    });
+
     it('should fail an entry that inflates past its declared size', async () => {
       await writeParts([
         ...workbookParts(1),
